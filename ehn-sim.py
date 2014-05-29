@@ -245,14 +245,9 @@ class SinkThread(threading.Thread):
 
 
 class HarvestEnergy(threading.Thread):
-	PANEL_AREA = 5.81 * 5.67  # units cm^2 --> Part is Cymbet CBC-PV01 Solar cell, 58.1mm x 56.7mm area
-	PANEL_EFFICIENCY = .01  # assume 1%
+	
 
-	""" max independently confirmed 10%
-		Green, Martin A., et al. "Solar cell efficiency tables (version 39)." 
-		Progress in photovoltaics: research and applications 20.1 (2012): 12-20."""
-
-	def __init__(self, threadID, name, node, filename, start_time, stop_time):
+	def __init__(self, threadID, name, node, data_list):
 		threading.Thread.__init__(self)
 		self.threadID = threadID
 		self.name = name
@@ -264,39 +259,19 @@ class HarvestEnergy(threading.Thread):
 	def run(self):
 		global stop_all
 
+		index = 0
 		time.sleep(HARVEST_INTERVAL)
-		t2 = self.start_time
-		t1 = self.start_time - HARVEST_START
 
 		while stop_all == False:
-
-			line_num1 = (t1 / 30) + 2
-			line_num2 = (t2 / 30) + 2
-
-			# grab the lines we want
-			line1 = (linecache.getline(self.filename, line_num1)).split()
-			line2 = (linecache.getline(self.filename, line_num2)).split()
-			linecache.clearcache()
-
-			# get the irradiance values
-			irr1 = line1[1]
-			irr2 = line2[1]
 				
 			# calculate energy harvested
-			energy_harvested = self.calc_energy_harvested(float(irr1), float(irr2), float(t1), float(t2))
+			energy_harvested = data_list[index][1]  # index 1 is the energy harvested data
 
 			threadLock.acquire()
 			############ Lock Acquired ############
 			self.node.charge(energy_harvested)  # charge with energy_harvested
 			threadLock.release()
 			############ Lock Released ############
-
-			t2 += HARVEST_START
-			t1 += HARVEST_START
-
-			if t1 >= self.stop_time:  # if we've reached where we want to stop
-				stop_all = True  # kill all threads
-				break
 
 			logtime = (time.time() - starting_point) 
 
@@ -316,44 +291,86 @@ class HarvestEnergy(threading.Thread):
 				batterylog.write( ("%.2f" % float(logtime)) + " " +
 									("%.5f" % float(self.node.current_energy)) + "\n" )
 
+			index += 1
 
-			
+			if index == data_list.length():  # if we've reached the end of the test interval
+				stop_all == False  # stop all
+				break  # kill thread asap
 
 			time.sleep(HARVEST_INTERVAL)
 			
 
-	def calc_energy_harvested(self, irr1, irr2, t1, t2):
+
+############################################
+#
+# Peripheral Functions
+#
+############################################
+
+
+def get_harvesting_data(filename, data_list, start_time, stop_time):
+	
+	# first figure out t1 and t2
+	t1 = start_time - HARVEST_START
+	t2 = start_time
+	
+	while t1 != stop_time:
+		# figure out which line numbers from the file you want
+		line_num1 = (t1 / 30) + 2
+		line_num2 = (t2 / 30) + 2
+
+		# grab the lines we want
+		line1 = (linecache.getline(filename, line_num1)).split()
+		line2 = (linecache.getline(filename, line_num2)).split()
+		linecache.clearcache()
+
+		# get the irradiance values
+		irr1 = line1[1]
+		irr2 = line2[1]
+
+		# calculate energy harvested
+		energy_harvested = calc_energy_harvested(float(irr1), float(irr2), float(t1), float(t2))
+
+		data_list.append((t2, energy_harvested))  # add energy harvested to data_list
+
+		t1 += HARVEST_START
+		t2 += HARVEST_START
+
+
+def calc_energy_harvested(irr1, irr2, t1, t2):
 		
-		###############################################
-		#
-		#  Here we determine how much energy is
-		#  harvested over a period t2 - t1. We 
-		#  assume the curve is linear over this
-		#  time period so first calculate the
-		#  equation for this line. We then integrate
-		#  this line over the period [t2, t1]
-		#  to determine the energy in joules.
-		# 
-		###############################################
+	PANEL_AREA = 5.81 * 5.67  # units cm^2 --> Part is Cymbet CBC-PV01 Solar cell, 58.1mm x 56.7mm area
+	PANEL_EFFICIENCY = .01  # assume 1%
 
-		# convert irradiance to power
-		p1 = irr1 * self.PANEL_AREA * self.PANEL_EFFICIENCY
-		p2 = irr2 * self.PANEL_AREA * self.PANEL_EFFICIENCY
+	""" max independently confirmed 10%
+		Green, Martin A., et al. "Solar cell efficiency tables (version 39)." 
+		Progress in photovoltaics: research and applications 20.1 (2012): 12-20."""
 
-		# calculate slope and intercept
-		m = (p2 - p1) / (t2 - t1)
-		b = p2 - (m * t2)
+	###############################################
+	#
+	#  Here we determine how much energy is
+	#  harvested over a period t2 - t1. We 
+	#  assume the curve is linear over this
+	#  time period so first calculate the
+	#  equation for this line. We then integrate
+	#  this line over the period [t2, t1]
+	#  to determine the energy in joules.
+	# 
+	###############################################
 
-		# now calculate energy by integrating 
-		energy = (  ( ((m * t2**2) / 2) + (b * t2) ) -
-					( ((m * t1**2) / 2) + (b * t1) )   )
+	# convert irradiance to power
+	p1 = irr1 * PANEL_AREA * PANEL_EFFICIENCY
+	p2 = irr2 * PANEL_AREA * PANEL_EFFICIENCY
 
-		return (energy / 1000)  # units of mJ
+	# calculate slope and intercept
+	m = (p2 - p1) / (t2 - t1)
+	b = p2 - (m * t2)
 
+	# now calculate energy by integrating 
+	energy = (  ( ((m * t2**2) / 2) + (b * t2) ) -
+				( ((m * t1**2) / 2) + (b * t1) )   )
 
-
-
-
+	return (energy / 1000)  # units of mJ
 
 
 
@@ -368,7 +385,7 @@ LOG_EVENTS = True
 LOG_HARVESTED_ENERGY = False
 LOG_BATT_STATE = False
 
-# event intervals in seconds
+# event intervals in seconds / 1000
 IDLE_UPDATE_INTERVAL  = 60  / 1000  # update idle energy consumption every minute
 TX_UPDATE_INTERVAL 	  = 180 / 1000  # transmit data every 3 minutes
 SENSE_UPDATE_INTERVAL = 180 / 1000  # sense every 3 minutes
@@ -379,9 +396,11 @@ HARVEST_INTERVAL      = 60  / 1000  # update harvested energy every 10 mintues
 HARVEST_START = 60
 HARVEST_END = 300
 
+# list containing list of energy harvested data points
+harvesting_data = []
+
 # Node capacity
 START_CAPCITY = 1368  # 1368 mJ based on 100 uAH capacity battery
-
 
 # list of devices that cnosume energy and how much energy they consume
 energy_consumption = {'tx': 1, 'rx':1 , 'idle': 0.18612, 'sense': 1} 
@@ -394,24 +413,29 @@ window_node = EHN(1, START_CAPCITY, energy_consumption)
 
 network.append(window_node)
 
+get_harvesting_data("SetupB_merged_2010_11_3_2010_11_24.txt", harvesting_data, HARVEST_START, HARVEST_END)
+
+for items in harvesting_data:
+	print items
+
 # create new threads
-thread1 = IdleThread(1, "idle", window_node)
-thread2 = TxThread(2, "tx", window_node)
-thread3 = SinkThread(3, "sink", network)
-thread4 = SenseThread(4, "sense", window_node)
-thread5 = HarvestEnergy(5, "harvest", window_node, "SetupB_merged_2010_11_3_2010_11_24.txt", HARVEST_START, HARVEST_END)
+#thread1 = IdleThread(1, "idle", window_node)
+#thread2 = TxThread(2, "tx", window_node)
+#thread3 = SinkThread(3, "sink", network)
+#thread4 = SenseThread(4, "sense", window_node)
+#thread5 = HarvestEnergy(5, "harvest", window_node, "SetupB_merged_2010_11_3_2010_11_24.txt", HARVEST_START, HARVEST_END)
 
 # log the start in the event log
-starting_point = time.time()  # timestamp when you start the simulation
-eventlog.write("Starting at " + str(datetime.datetime.now()) + " \n")
-eventlog.write("Starting Energy: " + str(window_node.storage_capacity) + "\n")
+#starting_point = time.time()  # timestamp when you start the simulation
+#eventlog.write("Starting at " + str(datetime.datetime.now()) + " \n")
+#eventlog.write("Starting Energy: " + str(window_node.storage_capacity) + "\n")
 
 # start thread
 #thread1.start()  # idle thread
 #thread2.start()
 #thread3.start()
 #thread4.start()
-thread5.start()  # harvesting thread
+#thread5.start()  # harvesting thread
 
 #while stop_all == False:
 	#print window_node.current_energy
