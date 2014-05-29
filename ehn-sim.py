@@ -252,12 +252,12 @@ class HarvestEnergy(threading.Thread):
 		Green, Martin A., et al. "Solar cell efficiency tables (version 39)." 
 		Progress in photovoltaics: research and applications 20.1 (2012): 12-20."""
 
-	def __init__(self, threadID, name, node, filename, start_time, stop_time):
+	def __init__(self, threadID, name, node, data_table, start_time, stop_time):
 		threading.Thread.__init__(self)
 		self.threadID = threadID
 		self.name = name
 		self.node = node
-		self.filename = filename
+		self.data_table = data_table
 		self.start_time = start_time
 		self.stop_time = stop_time
 
@@ -268,15 +268,10 @@ class HarvestEnergy(threading.Thread):
 		t2 = self.start_time
 		t1 = self.start_time - HARVEST_START
 
+		index2 = 1
+		index1 = 0
+
 		while stop_all == False:
-
-			line_num1 = (t1 / 30) + 2
-			line_num2 = (t2 / 30) + 2
-
-			# grab the lines we want
-			line1 = (linecache.getline(self.filename, line_num1)).split()
-			line2 = (linecache.getline(self.filename, line_num2)).split()
-			linecache.clearcache()
 
 			# get the irradiance values
 			irr1 = line1[1]
@@ -351,6 +346,13 @@ class HarvestEnergy(threading.Thread):
 		return (energy / 1000)  # units of mJ
 
 
+
+
+############################################
+#
+# Peripheral Functions
+#
+############################################
 
 
 
