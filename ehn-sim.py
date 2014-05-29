@@ -20,7 +20,9 @@ import linecache
 # output files for logging
 #
 ############################################
-eventlog = open('eventlog.txt', 'w')  # output file to log events
+eventlog = open('eventlog.txt', 'w')       # output file to log all events
+batterylog = open('batterylog.dat', 'w')     # output file to log energy
+harvestedlog = open('harvested.dat', 'w')  # output file to log energy harvested
 
 
 ############################################
@@ -120,13 +122,18 @@ class IdleThread (threading.Thread):
 			threadLock.release()
 			############ Lock Released ############
 
-			# log event
-			fmt = '{0:30} {1:10} {2:20} -{3:15} {4:15} \n'
-			eventlog.write( fmt.format( str(datetime.datetime.now()), 
-					    				("%.2f" % (time.time() - starting_point)),
-					    				"SPEND_IDLE",
-					    				str(self.node.energy_consumption["idle"]), 
-					    				str(self.node.current_energy)  )  )  
+			logtime = (time.time() - starting_point) 
+
+			if LOG_EVENTS == True:
+				fmt = '{0:30} {1:10} {2:20} -{3:15} {4:15} \n'
+				eventlog.write( fmt.format( str(datetime.datetime.now()), 
+						    				("%.2f" % (logtime)),
+						    				"SPEND_IDLE",
+						    				str(self.node.energy_consumption["idle"]), 
+						    				str(self.node.current_energy)  )  )  
+			if LOG_BATT_STATE == True:
+				batterylog.write( ("%.2f" % float(logtime)) + " " +
+									("%.5f" % float(self.node.current_energy)) + "\n" )
 
 
 			time.sleep(IDLE_UPDATE_INTERVAL)  # sleep to wait for next event
@@ -156,13 +163,13 @@ class TxThread (threading.Thread):
 			threadLock.release()
 			############ Lock Released ############
 
-			# log event
-			fmt = '{0:30} {1:10} {2:20} -{3:15} {4:15} \n'
-			eventlog.write( fmt.format( str(datetime.datetime.now()), 
-					    				("%.2f" % (time.time() - starting_point)),
-					    				"SPEND_TRANSMIT",
-					    				str(self.node.energy_consumption["tx"]), 
-					    				str(self.node.current_energy)  )  ) 
+			if LOG_EVENTS == True:
+				fmt = '{0:30} {1:10} {2:20} -{3:15} {4:15} \n'
+				eventlog.write( fmt.format( str(datetime.datetime.now()), 
+						    				("%.2f" % (time.time() - starting_point)),
+						    				"SPEND_TRANSMIT",
+						    				str(self.node.energy_consumption["tx"]), 
+						    				str(self.node.current_energy)  )  ) 
 
 			time.sleep(TX_UPDATE_INTERVAL)
 
@@ -190,13 +197,13 @@ class SenseThread (threading.Thread):
 			threadLock.release()
 			############ Lock Released ############
 
-			# log event
-			fmt = '{0:30} {1:10} {2:20} -{3:15} {4:15} \n'
-			eventlog.write( fmt.format( str(datetime.datetime.now()), 
-					    				("%.2f" % (time.time() - starting_point)),
-					    				"SPEND_SENSE",
-					    				str(self.node.energy_consumption["sense"]), 
-					    				str(self.node.current_energy)  )  ) 
+			if LOG_EVENTS == True:
+				fmt = '{0:30} {1:10} {2:20} -{3:15} {4:15} \n'
+				eventlog.write( fmt.format( str(datetime.datetime.now()), 
+						    				("%.2f" % (time.time() - starting_point)),
+						    				"SPEND_SENSE",
+						    				str(self.node.energy_consumption["sense"]), 
+						    				str(self.node.current_energy)  )  ) 
 
 			time.sleep(SENSE_UPDATE_INTERVAL)
 
@@ -218,13 +225,13 @@ class SinkThread(threading.Thread):
 			for nodes in self.node_list:
 				nodes.spend_rx()
 
-				# log rx event
-				fmt = '{0:30} {1:10} {2:20} -{3:15} {4:15} \n'
-				eventlog.write( fmt.format( str(datetime.datetime.now()), 
-						    				("%.2f" % (time.time() - starting_point)),
-						    				"SPEND_RECEIVE",
-						    				str(nodes.energy_consumption["rx"]), 
-						    				str(nodes.current_energy)  )  ) 
+				if LOG_EVENTS == True:
+					fmt = '{0:30} {1:10} {2:20} -{3:15} {4:15} \n'
+					eventlog.write( fmt.format( str(datetime.datetime.now()), 
+							    				("%.2f" % (time.time() - starting_point)),
+							    				"SPEND_RECEIVE",
+							    				str(nodes.energy_consumption["rx"]), 
+							    				str(nodes.current_energy)  )  ) 
 
 				if nodes.current_energy <= THRESHOLD:  # check battery level against Threshold
 					stop_all = True
@@ -238,34 +245,43 @@ class SinkThread(threading.Thread):
 
 
 class HarvestEnergy(threading.Thread):
-	PANEL_AREA = 1
-	PANEL_EFFICIENCY = 1
+	PANEL_AREA = 5.81 * 5.67  # units cm^2 --> Part is Cymbet CBC-PV01 Solar cell, 58.1mm x 56.7mm area
+	PANEL_EFFICIENCY = .01  # assume 1%
 
-	def __init__(self, threadID, name, node, filename, start_time):
+	""" max independently confirmed 10%
+		Green, Martin A., et al. "Solar cell efficiency tables (version 39)." 
+		Progress in photovoltaics: research and applications 20.1 (2012): 12-20."""
+
+	def __init__(self, threadID, name, node, filename, start_time, stop_time):
 		threading.Thread.__init__(self)
 		self.threadID = threadID
 		self.name = name
 		self.node = node
 		self.filename = filename
 		self.start_time = start_time
+		self.stop_time = stop_time
 
 	def run(self):
+		global stop_all
+
 		time.sleep(HARVEST_INTERVAL)
 		t2 = self.start_time
-		t1 = self.start_time - 30
+		t1 = self.start_time - HARVEST_START
 
 		while stop_all == False:
-			line_num = (t1 / 30) + 2
+
+			line_num1 = (t1 / 30) + 2
+			line_num2 = (t2 / 30) + 2
 
 			# grab the lines we want
-			line1 = (linecache.getline(self.filename, line_num)).split()
-			line2 = (linecache.getline(self.filename, line_num + 1)).split()
+			line1 = (linecache.getline(self.filename, line_num1)).split()
+			line2 = (linecache.getline(self.filename, line_num2)).split()
 			linecache.clearcache()
 
 			# get the irradiance values
 			irr1 = line1[1]
 			irr2 = line2[1]
-			
+				
 			# calculate energy harvested
 			energy_harvested = self.calc_energy_harvested(float(irr1), float(irr2), float(t1), float(t2))
 
@@ -275,18 +291,36 @@ class HarvestEnergy(threading.Thread):
 			threadLock.release()
 			############ Lock Released ############
 
-			# log event
-			fmt = '{0:30} {1:10} {2:20} +{3:15} {4:15} \n'
-			eventlog.write( fmt.format( str(datetime.datetime.now()), 
-					    				("%.2f" % (time.time() - starting_point)),
-					    				"HARVEST",
-					    				str(energy_harvested), 
-					    				str(self.node.current_energy)  )  )
+			t2 += HARVEST_START
+			t1 += HARVEST_START
 
-			t2 += 30
-			t1 += 30
+			if t1 >= self.stop_time:  # if we've reached where we want to stop
+				stop_all = True  # kill all threads
+				break
+
+			logtime = (time.time() - starting_point) 
+
+			if LOG_EVENTS == True:
+				fmt = '{0:30} {1:10} {2:20} {3:20} +{4:15} {5:15} \n'
+				eventlog.write( fmt.format( str(datetime.datetime.now()), 
+						    				("%.2f" % (logtime)),
+						    				"HARVEST",
+						    				str(line_num2),
+						    				("%.5f" % (energy_harvested)), 
+						    				str(self.node.current_energy)  )  )
+			if LOG_HARVESTED_ENERGY == True:
+				harvestedlog.write( ("%.2f" % float(logtime)) + " " +
+									("%.5f" % float(energy_harvested)) + "\n" )
+
+			if LOG_BATT_STATE == True:
+				batterylog.write( ("%.2f" % float(logtime)) + " " +
+									("%.5f" % float(self.node.current_energy)) + "\n" )
+
+
+			
+
 			time.sleep(HARVEST_INTERVAL)
-	
+			
 
 	def calc_energy_harvested(self, irr1, irr2, t1, t2):
 		
@@ -309,12 +343,12 @@ class HarvestEnergy(threading.Thread):
 		# calculate slope and intercept
 		m = (p2 - p1) / (t2 - t1)
 		b = p2 - (m * t2)
-		
+
 		# now calculate energy by integrating 
 		energy = (  ( ((m * t2**2) / 2) + (b * t2) ) -
 					( ((m * t1**2) / 2) + (b * t1) )   )
 
-		return energy
+		return (energy / 1000)  # units of mJ
 
 
 
@@ -329,22 +363,34 @@ class HarvestEnergy(threading.Thread):
 #
 ############################################
 
-# event intervals
-IDLE_UPDATE_INTERVAL  = 0.25
-TX_UPDATE_INTERVAL 	  = 1
-SENSE_UPDATE_INTERVAL = 1
-SINK_UPDATE_INTERVAL  = 10
-HARVEST_INTERVAL      = 30
+# variable for logging
+LOG_EVENTS = True
+LOG_HARVESTED_ENERGY = False
+LOG_BATT_STATE = False
+
+# event intervals in seconds
+IDLE_UPDATE_INTERVAL  = 60  / 1000  # update idle energy consumption every minute
+TX_UPDATE_INTERVAL 	  = 180 / 1000  # transmit data every 3 minutes
+SENSE_UPDATE_INTERVAL = 180 / 1000  # sense every 3 minutes
+SINK_UPDATE_INTERVAL  = 600 / 1000  # receive sink update every 10 minutes
+HARVEST_INTERVAL      = 60  / 1000  # update harvested energy every 10 mintues
+
+# start and stop times
+HARVEST_START = 60
+HARVEST_END = 300
+
+# Node capacity
+START_CAPCITY = 1368  # 1368 mJ based on 100 uAH capacity battery
 
 
 # list of devices that cnosume energy and how much energy they consume
-energy_consumption = {'tx': 100, 'rx': 5, 'idle': 0.5, 'sense': 50} 
+energy_consumption = {'tx': 1, 'rx':1 , 'idle': 0.18612, 'sense': 1} 
 
 # list containing nodes in the network
 network = []
 
 # create new node
-window_node = EHN(1, 1000, energy_consumption)
+window_node = EHN(1, START_CAPCITY, energy_consumption)
 
 network.append(window_node)
 
@@ -353,7 +399,7 @@ thread1 = IdleThread(1, "idle", window_node)
 thread2 = TxThread(2, "tx", window_node)
 thread3 = SinkThread(3, "sink", network)
 thread4 = SenseThread(4, "sense", window_node)
-thread5 = HarvestEnergy(5, "harvest", window_node, "irradiance_test.txt", 120)
+thread5 = HarvestEnergy(5, "harvest", window_node, "SetupB_merged_2010_11_3_2010_11_24.txt", HARVEST_START, HARVEST_END)
 
 # log the start in the event log
 starting_point = time.time()  # timestamp when you start the simulation
@@ -361,9 +407,11 @@ eventlog.write("Starting at " + str(datetime.datetime.now()) + " \n")
 eventlog.write("Starting Energy: " + str(window_node.storage_capacity) + "\n")
 
 # start thread
-thread1.start()
-thread2.start()
-thread3.start()
-thread4.start()
-thread5.start()
+#thread1.start()  # idle thread
+#thread2.start()
+#thread3.start()
+#thread4.start()
+thread5.start()  # harvesting thread
 
+#while stop_all == False:
+	#print window_node.current_energy
