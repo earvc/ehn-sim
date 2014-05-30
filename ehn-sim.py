@@ -112,6 +112,7 @@ class IdleThread (threading.Thread):
 		time.sleep(IDLE_UPDATE_INTERVAL)
 
 		while stop_all == False:
+
 			threadLock.acquire()
 			############ Lock Acquired ############
 			self.node.spend_idle()
@@ -125,15 +126,12 @@ class IdleThread (threading.Thread):
 			logtime = (time.time() - starting_point) 
 
 			if LOG_EVENTS == True:
-				fmt = '{0:30} {1:10} {2:20} -{3:15} {4:15} \n'
+				fmt = '{0:30} {1:10} {2:20} -{3:20} {4:15} \n'
 				eventlog.write( fmt.format( str(datetime.datetime.now()), 
-						    				("%.2f" % (logtime)),
+						    				("%.5f" % (logtime)),
 						    				"SPEND_IDLE",
 						    				str(self.node.energy_consumption["idle"]), 
 						    				str(self.node.current_energy)  )  )  
-			if LOG_BATT_STATE == True:
-				batterylog.write( ("%.2f" % float(logtime)) + " " +
-									("%.5f" % float(self.node.current_energy)) + "\n" )
 
 
 			time.sleep(IDLE_UPDATE_INTERVAL)  # sleep to wait for next event
@@ -152,6 +150,7 @@ class TxThread (threading.Thread):
 		global stop_all
 		time.sleep(TX_UPDATE_INTERVAL)
 
+
 		while stop_all == False:
 			threadLock.acquire()
 			############ Lock Acquired ############
@@ -163,10 +162,12 @@ class TxThread (threading.Thread):
 			threadLock.release()
 			############ Lock Released ############
 
+			logtime = (time.time() - starting_point) 
+
 			if LOG_EVENTS == True:
-				fmt = '{0:30} {1:10} {2:20} -{3:15} {4:15} \n'
+				fmt = '{0:30} {1:10} {2:20} -{3:20} {4:15} \n'
 				eventlog.write( fmt.format( str(datetime.datetime.now()), 
-						    				("%.2f" % (time.time() - starting_point)),
+						    				("%.5f" % (logtime)),
 						    				"SPEND_TRANSMIT",
 						    				str(self.node.energy_consumption["tx"]), 
 						    				str(self.node.current_energy)  )  ) 
@@ -198,7 +199,7 @@ class SenseThread (threading.Thread):
 			############ Lock Released ############
 
 			if LOG_EVENTS == True:
-				fmt = '{0:30} {1:10} {2:20} -{3:15} {4:15} \n'
+				fmt = '{0:30} {1:10} {2:20} -{3:20} {4:15} \n'
 				eventlog.write( fmt.format( str(datetime.datetime.now()), 
 						    				("%.2f" % (time.time() - starting_point)),
 						    				"SPEND_SENSE",
@@ -252,9 +253,7 @@ class HarvestEnergy(threading.Thread):
 		self.threadID = threadID
 		self.name = name
 		self.node = node
-		self.filename = filename
-		self.start_time = start_time
-		self.stop_time = stop_time
+		self.data_list = data_list	
 
 	def run(self):
 		global stop_all
@@ -264,8 +263,8 @@ class HarvestEnergy(threading.Thread):
 
 		while stop_all == False:
 				
-			# calculate energy harvested
-			energy_harvested = data_list[index][1]  # index 1 is the energy harvested data
+			# get energy harvested
+			energy_harvested = self.data_list[index][1]  # index 1 is the energy harvested data
 
 			threadLock.acquire()
 			############ Lock Acquired ############
@@ -276,25 +275,25 @@ class HarvestEnergy(threading.Thread):
 			logtime = (time.time() - starting_point) 
 
 			if LOG_EVENTS == True:
-				fmt = '{0:30} {1:10} {2:20} {3:20} +{4:15} {5:15} \n'
+				fmt = '{0:30} {1:10} {2:20} +{3:20} {4:15} \n'
 				eventlog.write( fmt.format( str(datetime.datetime.now()), 
-						    				("%.2f" % (logtime)),
+						    				("%.5f" % (logtime)),
 						    				"HARVEST",
-						    				str(line_num2),
-						    				("%.5f" % (energy_harvested)), 
-						    				str(self.node.current_energy)  )  )
+						    				str(energy_harvested), 
+						    				str(self.node.current_energy)  )  ) 
+
 			if LOG_HARVESTED_ENERGY == True:
-				harvestedlog.write( ("%.2f" % float(logtime)) + " " +
-									("%.5f" % float(energy_harvested)) + "\n" )
+				harvestedlog.write( str(self.data_list[index][0]) + " " +
+									("%.8f" % float(energy_harvested)) + "\n" )
 
 			if LOG_BATT_STATE == True:
-				batterylog.write( ("%.2f" % float(logtime)) + " " +
-									("%.5f" % float(self.node.current_energy)) + "\n" )
+				batterylog.write( str(self.data_list[index][0]) + " " +
+									("%.8f" % float(self.node.current_energy)) + "\n" )
 
 			index += 1
 
-			if index == data_list.length():  # if we've reached the end of the test interval
-				stop_all == False  # stop all
+			if index == len(self.data_list):  # if we've reached the end of the test interval
+				stop_all = True  # stop all
 				break  # kill thread asap
 
 			time.sleep(HARVEST_INTERVAL)
@@ -311,7 +310,7 @@ class HarvestEnergy(threading.Thread):
 def get_harvesting_data(filename, data_list, start_time, stop_time):
 	
 	# first figure out t1 and t2
-	t1 = start_time - HARVEST_START
+	t1 = start_time - HARVEST_RESOLUTION
 	t2 = start_time
 	
 	while t1 != stop_time:
@@ -322,7 +321,7 @@ def get_harvesting_data(filename, data_list, start_time, stop_time):
 		# grab the lines we want
 		line1 = (linecache.getline(filename, line_num1)).split()
 		line2 = (linecache.getline(filename, line_num2)).split()
-		linecache.clearcache()
+		#linecache.clearcache()
 
 		# get the irradiance values
 		irr1 = line1[1]
@@ -333,8 +332,8 @@ def get_harvesting_data(filename, data_list, start_time, stop_time):
 
 		data_list.append((t2, energy_harvested))  # add energy harvested to data_list
 
-		t1 += HARVEST_START
-		t2 += HARVEST_START
+		t1 += HARVEST_RESOLUTION
+		t2 += HARVEST_RESOLUTION
 
 
 def calc_energy_harvested(irr1, irr2, t1, t2):
@@ -382,19 +381,22 @@ def calc_energy_harvested(irr1, irr2, t1, t2):
 
 # variable for logging
 LOG_EVENTS = True
-LOG_HARVESTED_ENERGY = False
-LOG_BATT_STATE = False
+LOG_HARVESTED_ENERGY = True
+LOG_BATT_STATE = True
 
 # event intervals in seconds / 1000
-IDLE_UPDATE_INTERVAL  = 60  / 1000  # update idle energy consumption every minute
-TX_UPDATE_INTERVAL 	  = 180 / 1000  # transmit data every 3 minutes
-SENSE_UPDATE_INTERVAL = 180 / 1000  # sense every 3 minutes
-SINK_UPDATE_INTERVAL  = 600 / 1000  # receive sink update every 10 minutes
-HARVEST_INTERVAL      = 60  / 1000  # update harvested energy every 10 mintues
+IDLE_UPDATE_INTERVAL  = 30.0  / 1000  # update idle energy consumption every minute
+TX_UPDATE_INTERVAL 	  = 90.0 / 1000  # transmit data every 1.5 minutes
+SENSE_UPDATE_INTERVAL = 90.0 / 1000  # sense every 1.5 minutes
+SINK_UPDATE_INTERVAL  = 180.0 / 1000 # receive sink update every 3 minutes
+HARVEST_INTERVAL      = 30.0  / 1000  # update harvested energy every 10 mintues
+
+
 
 # start and stop times
-HARVEST_START = 60
-HARVEST_END = 300
+HARVEST_START = 360000
+HARVEST_END = 720000
+HARVEST_RESOLUTION = 30
 
 # list containing list of energy harvested data points
 harvesting_data = []
@@ -403,7 +405,7 @@ harvesting_data = []
 START_CAPCITY = 1368  # 1368 mJ based on 100 uAH capacity battery
 
 # list of devices that cnosume energy and how much energy they consume
-energy_consumption = {'tx': 1, 'rx':1 , 'idle': 0.18612, 'sense': 1} 
+energy_consumption = {'tx': 0.738778, 'rx':0.137669 , 'idle': 0.09306, 'sense': 0.00495} 
 
 # list containing nodes in the network
 network = []
@@ -413,29 +415,32 @@ window_node = EHN(1, START_CAPCITY, energy_consumption)
 
 network.append(window_node)
 
+print "Fetching harvesting data..."
 get_harvesting_data("SetupB_merged_2010_11_3_2010_11_24.txt", harvesting_data, HARVEST_START, HARVEST_END)
 
-for items in harvesting_data:
-	print items
-
-# create new threads
-#thread1 = IdleThread(1, "idle", window_node)
-#thread2 = TxThread(2, "tx", window_node)
-#thread3 = SinkThread(3, "sink", network)
-#thread4 = SenseThread(4, "sense", window_node)
-#thread5 = HarvestEnergy(5, "harvest", window_node, "SetupB_merged_2010_11_3_2010_11_24.txt", HARVEST_START, HARVEST_END)
+print "Finished fetching data. Starting simulation..."
 
 # log the start in the event log
-#starting_point = time.time()  # timestamp when you start the simulation
-#eventlog.write("Starting at " + str(datetime.datetime.now()) + " \n")
-#eventlog.write("Starting Energy: " + str(window_node.storage_capacity) + "\n")
+starting_point = time.time()  # timestamp when you start the simulation
+eventlog.write("Starting at " + str(datetime.datetime.now()) + " \n")
+eventlog.write("Starting Energy: " + str(window_node.storage_capacity) + "\n")
+
+# create new threads
+thread1 = IdleThread(1, "idle", window_node)
+thread2 = TxThread(2, "tx", window_node)
+#thread3 = SinkThread(3, "sink", network)
+#thread4 = SenseThread(4, "sense", window_node)
+thread5 = HarvestEnergy(5, "harvest", window_node, harvesting_data)
+
+
 
 # start thread
-#thread1.start()  # idle thread
-#thread2.start()
+thread1.start()  # idle thread
+thread2.start()  # transmit thread
 #thread3.start()
 #thread4.start()
-#thread5.start()  # harvesting thread
+thread5.start()  # harvesting thread
+
 
 #while stop_all == False:
 	#print window_node.current_energy
